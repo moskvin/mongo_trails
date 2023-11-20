@@ -1,12 +1,12 @@
 # frozen_string_literal: true
 
-require "mongoid"
-require "autoinc"
+require 'mongoid'
+require 'autoinc'
 
 begin
   require 'sidekiq'
-  require "mongo_trails/mongo_support/write_version_worker"
-  require "mongo_trails/mongo_support/criteria"
+  require 'mongo_trails/mongo_support/write_version_worker'
+  require 'mongo_trails/mongo_support/criteria'
 rescue LoadError
   # Continue without Sidekiq
 end
@@ -28,8 +28,7 @@ module MongoTrails
         (PaperTrail.config.mongo_prefix.is_a?(Proc) && PaperTrail.config.mongo_prefix.call) || 'paper_trail'
       end
 
-      def table_name
-      end
+      def table_name; end
 
       def abstract_class?
         false
@@ -43,21 +42,18 @@ module MongoTrails
         fields.keys
       end
 
-      def belongs_to(name, args)
-      end
+      def belongs_to(_name, _options = {}, &block); end
 
-      def validates_presence_of(name)
-      end
+      def validates_presence_of(_name); end
 
-      def after_create(name)
-      end
+      def after_create(_name); end
     end
 
     include PaperTrail::VersionConcern
     include Mongoid::Document
     include Mongoid::Autoinc
 
-    store_in collection: ->() { "#{MongoTrails::Version.prefix_map}_versions" }
+    store_in collection: -> { "#{MongoTrails::Version.prefix_map}_versions" }
 
     field :item_type, type: String
     field :item_id, type: String
@@ -127,11 +123,11 @@ module MongoTrails
 
     def async_save!
       worker = defined?(PaperTrail.config.sidekiq_worker.queue) ? PaperTrail.config.sidekiq_worker : PaperTrail::WriteVersionWorker
-
+      args = attributes.as_json
       if worker == PaperTrail::WriteVersionWorker
-        worker.set(PaperTrail.config.sidekiq_options).perform_async(attributes)
+        worker.set(PaperTrail.config.sidekiq_options).perform_async(args)
       else
-        worker.perform_async(attributes)
+        worker.perform_async(args)
       end
     end
   end
