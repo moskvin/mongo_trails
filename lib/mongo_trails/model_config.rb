@@ -35,13 +35,17 @@ module PaperTrail
         def paper_trail_accumulate_versions
           @paper_trail_accumulated_versions ||= {}
 
-          saved_changes.each do |k, v|
+          saved_changes.each do |k, new_value|
             old_value = @paper_trail_accumulated_versions[k.to_sym]
-            @paper_trail_accumulated_versions[k.to_sym] = if old_value.present? && old_value.is_a?(Array) && old_value.size > 1 # rubocop:disable Layout/LineLength
-                                                            [old_value.first, v.last]
-                                                          else
-                                                            v
-                                                          end
+            @paper_trail_accumulated_versions[k.to_sym] = paper_trail_accumulated_version_value(old_value, new_value)
+          end
+        end
+
+        def paper_trail_accumulated_version_value(old_value, new_value)
+          if old_value.present? && old_value.is_a?(Array) && old_value.size > 1 && new_value.is_a?(Array) && new_value.size > 1 # rubocop:disable Layout/LineLength
+            [old_value.first, new_value.last]
+          else
+            new_value
           end
         end
 
