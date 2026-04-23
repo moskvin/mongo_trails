@@ -2,7 +2,7 @@ module PaperTrail
   module Events
     class Base
       def load_changes_in_latest_version
-        changes = if ['PaperTrail::Events::Create', 'PaperTrail::Events::Update'].include?(self.class.to_s)
+        changes = if ['PaperTrail::Events::Create', 'PaperTrail::Events::Update'].include?(self.class.to_s) && @record.respond_to?(:paper_trail_accumulated_versions)
           @record.paper_trail_accumulated_versions
         elsif @in_after_callback
           @record.saved_changes
@@ -10,13 +10,16 @@ module PaperTrail
           @record.changes
         end
 
-        changes = @record.paper_trail_accumulated_versions 
+        safe_changes = changes ? changes.dup : {}
 
-        # this is for checking the change in a jsonb column
-        changes.delete_if { |_k, v|
-          v.is_a?(Array) && v.size > 1 && v.last.is_a?(Hash) && v.uniq.size == 1
-        }
-        changes
+        safe_changes.delete_if do |_k, v|
+          next unless v.is_a?(Array)
+          next if v.size <= 1
+
+          v.uniq.size == 1
+        end
+        
+        safe_changes
       end
     end
   end

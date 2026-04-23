@@ -34,8 +34,14 @@ module PaperTrail
 
         def paper_trail_accumulate_versions
           @paper_trail_accumulated_versions ||= {}
+
           saved_changes.each do |k, v|
-            @paper_trail_accumulated_versions[k.to_sym] = v
+            old_value = @paper_trail_accumulated_versions[k.to_sym]
+            @paper_trail_accumulated_versions[k.to_sym] = if old_value.present? && old_value.is_a?(Array) && old_value.size > 1 # rubocop:disable Layout/LineLength
+                                                            [old_value.first, v.last]
+                                                          else
+                                                            v
+                                                          end
           end
         end
 
@@ -60,7 +66,7 @@ module PaperTrail
       append_option_uniquely(:on, :create)
     end
 
-    def on_update
+    def on_update # rubocop:disable Metrics/MethodLength
       @model_class.class_eval do
         before_save :paper_trail_reset_timestamps_if_needed
         after_commit :paper_trail_on_record_update, on: :update
@@ -86,6 +92,21 @@ module PaperTrail
       end
 
       append_option_uniquely(:on, :update)
+    end
+
+    def on_destroy(_recording_order = 'before')
+      @model_class.class_eval do
+        after_commit :paper_trail_on_record_destroy_in_transaction, on: :destroy
+
+        private
+
+        def paper_trail_on_record_destroy_in_transaction
+          paper_trail.record_destroy('before')
+          paper_trail_clear_accumulated_versions
+        end
+      end
+
+      append_option_uniquely(:on, :destroy)
     end
   end
 end

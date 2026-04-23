@@ -52,7 +52,6 @@ module MongoTrails
     include PaperTrail::VersionConcern
     include Mongoid::Document
     include Mongoid::Autoinc
-    include AfterCommitEverywhere
 
     store_in collection: -> { "#{MongoTrails::Version.prefix_map}_versions" }
 

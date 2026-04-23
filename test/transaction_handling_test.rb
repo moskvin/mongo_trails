@@ -28,15 +28,50 @@ class TransactionHandlingTest < Minitest::Test
     ActiveRecord::Base.transaction do
       user.update!(name: 'Arnold Schwarzenegger')
       user.update!(title: 'Governor')
+      user.update!(name: 'Chuck Norris')
       user.update!(name: 'Jackie Chan')
     end
 
-    assert_equal 4, user.versions.count
-    assert_equal({ 'name' => ['John Doe', 'Arnold Schwarzenegger'] },
-                 user.versions.where(event: 'update')[0].object_changes)
-    assert_equal({ 'title' => [nil, 'Governor'] }, user.versions.where(event: 'update')[1].object_changes)
-    assert_equal({ 'name' => ['Arnold Schwarzenegger', 'Jackie Chan'] },
-                 user.versions.where(event: 'update')[2].object_changes)
+    assert_equal 2, user.versions.count
+    assert_equal %w[create update], user.versions.pluck(:event)
+    versions = user.versions
+    assert_equal(versions.last.event, 'update')
+    assert_equal(versions.last.object_changes.keys, %w[name title])
+    assert_equal(['John Doe', 'Jackie Chan'], versions.last.object_changes['name'])
+    assert_equal([nil, 'Governor'], versions.last.object_changes['title'])
+  end
+
+  def test_on_update_that_did_not_changed_the_name
+    user = User.create!(name: 'John Doe')
+    assert_equal 1, user.versions.count
+
+    ActiveRecord::Base.transaction do
+      user.update!(name: 'Jackie Chan')
+      user.update!(name: 'Chuck Norris')
+      user.update!(name: 'John Doe')
+    end
+
+    assert_equal ['create'], user.versions.pluck(:event)
+    assert_equal 1, user.versions.count
+    assert_equal 'create', user.versions.first.event
+  end
+
+  def test_on_name_not_changed_but_title_changed
+    user = User.create!(name: 'John Doe')
+    assert_equal 1, user.versions.count
+
+    ActiveRecord::Base.transaction do
+      user.update!(name: 'Jackie Chan')
+      user.update!(title: 'Governor')
+      user.update!(name: 'John Doe')
+    end
+
+    assert_equal 2, user.versions.count
+    assert_equal %w[create update], user.versions.pluck(:event)
+    versions = user.versions
+    assert_equal(versions.last.event, 'update')
+    assert_equal(versions.last.object_changes.keys, %w[title])
+    assert_equal([nil, 'Governor'], versions.last.object_changes['title'])
   end
 
   def test_on_update_does_not_create_version_if_transaction_not_completed
