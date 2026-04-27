@@ -25,7 +25,7 @@ module PaperTrail
 
     def on_save
       @model_class.class_eval do
-        attr_reader :paper_trail_accumulated_versions
+        attr_reader :paper_trail_accumulated_versions, :paper_trail_whodunnit
 
         after_save :paper_trail_accumulate_versions
         after_rollback :paper_trail_clear_accumulated_versions
@@ -34,6 +34,7 @@ module PaperTrail
 
         def paper_trail_accumulate_versions
           @paper_trail_accumulated_versions ||= {}
+          @paper_trail_whodunnit = PaperTrail.request.whodunnit
 
           saved_changes.each do |k, new_value|
             old_value = @paper_trail_accumulated_versions[k.to_sym]
