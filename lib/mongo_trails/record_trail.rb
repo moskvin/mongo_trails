@@ -55,7 +55,8 @@ module PaperTrail
     private
 
     def assign_whodunnit!(version)
-      return unless @record.respond_to?(:paper_trail_whodunnit) && @record.paper_trail_whodunnit.present?
+      return unless version.present?
+      return unless @record.respond_to?(:paper_trail_whodunnit) && @record.paper_trail_whodunnit.present? 
 
       version.whodunnit = @record.paper_trail_whodunnit.to_s
     end
