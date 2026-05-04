@@ -19,7 +19,7 @@ module PaperTrail
           v.uniq.size == 1
         end
         
-        safe_changes
+        safe_changes.as_json
       end
     end
   end
