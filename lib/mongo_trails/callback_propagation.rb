@@ -54,5 +54,6 @@ module PaperTrail
 end
 
 ActiveSupport.on_load(:active_record) do
+  require 'active_record/connection_adapters/abstract/transaction'
   ActiveRecord::ConnectionAdapters::Transaction.prepend(PaperTrail::CallbackPropagation)
 end
