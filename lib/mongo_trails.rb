@@ -10,6 +10,7 @@ require 'mongo_trails/model_config'
 require 'mongo_trails/version_concern'
 require 'mongo_trails/record_trail'
 require 'mongo_trails/events/base'
+require 'mongo_trails/callback_propagation'
 
 ActiveSupport.on_load(:active_record) do
   require 'mongo_trails/mongo_support/version'
