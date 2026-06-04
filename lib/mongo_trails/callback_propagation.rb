@@ -55,5 +55,13 @@ end
 
 ActiveSupport.on_load(:active_record) do
   require 'active_record/connection_adapters/abstract/transaction'
-  ActiveRecord::ConnectionAdapters::Transaction.prepend(PaperTrail::CallbackPropagation)
+
+  # `prepare_instances_to_run_callbacks_on` and the
+  # `run_commit_callbacks_on_first_saved_instances_in_transaction` class attribute were
+  # introduced together in Rails 7.1. On older Rails the dedup logic is inline in
+  # `commit_records` and not configurable — skip the prepend so we don't shadow a method
+  # the gem doesn't need and don't reference a missing class attribute.
+  if ActiveRecord::ConnectionAdapters::Transaction.private_method_defined?(:prepare_instances_to_run_callbacks_on)
+    ActiveRecord::ConnectionAdapters::Transaction.prepend(PaperTrail::CallbackPropagation)
+  end
 end
