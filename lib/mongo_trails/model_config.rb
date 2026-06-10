@@ -25,20 +25,42 @@ module PaperTrail
 
     def on_save
       @model_class.class_eval do
-        attr_reader :paper_trail_accumulated_versions, :paper_trail_whodunnit
+        attr_reader :paper_trail_accumulated_versions, :paper_trail_whodunnit,
+                    :paper_trail_controller_info, :paper_trail_event_group_uuid
 
         after_save :paper_trail_accumulate_versions
         after_rollback :paper_trail_clear_accumulated_versions
 
         private
 
+        # Capture the whole PaperTrail.request context (not just whodunnit) on the saved
+        # instance. The version is built later from after_commit, possibly on a *different*
+        # instance and after the request context that performed the save has been restored —
+        # so whodunnit, controller_info (e.g. impersonation / integration) and the app's
+        # event_group_uuid all have to travel on the instance, the same way whodunnit does.
         def paper_trail_accumulate_versions
           @paper_trail_accumulated_versions ||= {}
           @paper_trail_whodunnit = PaperTrail.request.whodunnit
+          @paper_trail_controller_info = PaperTrail.request.controller_info
+          @paper_trail_event_group_uuid = PaperTrail.request.event_group_uuid if PaperTrail.request.respond_to?(:event_group_uuid)
 
           saved_changes.each do |k, new_value|
             old_value = @paper_trail_accumulated_versions[k.to_sym]
             @paper_trail_accumulated_versions[k.to_sym] = paper_trail_accumulated_version_value(old_value, new_value)
+          end
+        end
+
+        # Restore the captured request context for the duration of the version build so that
+        # everything that reads PaperTrail.request while building the version (whodunnit,
+        # controller_info metadata, event_group_uuid) reflects the writer this version belongs
+        # to, rather than whatever the request happens to hold at commit time.
+        def paper_trail_within_writer_request
+          return yield unless instance_variable_defined?(:@paper_trail_controller_info)
+
+          set_event_group_uuid = PaperTrail.request.respond_to?(:event_group_uuid=)
+          PaperTrail.request.with(whodunnit: @paper_trail_whodunnit, controller_info: @paper_trail_controller_info) do
+            PaperTrail.request.event_group_uuid = @paper_trail_event_group_uuid if set_event_group_uuid
+            yield
           end
         end
 
@@ -63,7 +85,7 @@ module PaperTrail
         private
 
         def paper_trail_on_record_create_in_transaction
-          paper_trail.record_create if paper_trail.save_version?
+          paper_trail_within_writer_request { paper_trail.record_create if paper_trail.save_version? }
           paper_trail_clear_accumulated_versions
         end
       end
@@ -83,12 +105,14 @@ module PaperTrail
         end
 
         def paper_trail_on_record_update
-          if paper_trail.save_version?
-            paper_trail.record_update(
-              force: false,
-              in_after_callback: true,
-              is_touch: false
-            )
+          paper_trail_within_writer_request do
+            if paper_trail.save_version?
+              paper_trail.record_update(
+                force: false,
+                in_after_callback: true,
+                is_touch: false
+              )
+            end
           end
 
           paper_trail.clear_version_instance
@@ -106,7 +130,7 @@ module PaperTrail
         private
 
         def paper_trail_on_record_destroy_in_transaction
-          paper_trail.record_destroy('before')
+          paper_trail_within_writer_request { paper_trail.record_destroy('before') }
           paper_trail_clear_accumulated_versions
         end
       end
