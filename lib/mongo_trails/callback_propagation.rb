@@ -3,8 +3,8 @@
 module PaperTrail
   # mongo_trails captures paper_trail state on the saved instance via after_save (see
   # ModelConfig#paper_trail_accumulate_versions): the accumulated field changes plus a snapshot
-  # of the request context (whodunnit, controller_info, event_group_uuid). It reads that state
-  # back from after_commit to build the version.
+  # of the whole PaperTrail.request context. It reads that state back from after_commit to build
+  # the version.
   #
   # When the same record is saved more than once in a transaction through different in-memory
   # instances, Rails 7.1+ picks ONE instance to fire after_commit on and discards the rest — so
@@ -17,26 +17,18 @@ module PaperTrail
   # the earlier candidate and DROP later instances, we:
   #
   #   * merge every discarded instance's accumulated field changes onto the kept candidate, and
-  #   * copy the captured request context (whodunnit + controller_info + event_group_uuid) of
-  #     the LAST writer onto the kept candidate.
+  #   * hand the kept candidate the captured request context of the LAST writer.
   #
   # The request context is NOT taken from "whichever instance was enrolled in the transaction
   # last": instances are enrolled in first-save order, so when the kept (first) instance is
   # itself re-saved AFTER a later instance, naively copying the later instance's state would
   # clobber the kept instance's own, newer state and attribute the version to the wrong writer
   # (e.g. the wrong automation). Instead we read the full, chronologically-ordered list of saves
-  # to find the genuinely LAST writer of each record.
+  # to find the genuinely LAST writer of each record. The context itself is opaque here: the
+  # model (ModelConfig) owns what is captured and restored, so this code stays agnostic of any
+  # host-app-specific request state.
   module CallbackPropagation
     private
-
-    # Captured request state to copy from the last writer onto the kept instance. Whodunnit is
-    # read back by `RecordTrail#assign_whodunnit!`; the rest is restored around the version
-    # build by `ModelConfig#paper_trail_within_writer_request`.
-    PAPER_TRAIL_STATE_IVARS = %i[
-      @paper_trail_whodunnit
-      @paper_trail_controller_info
-      @paper_trail_event_group_uuid
-    ].freeze
 
     def prepare_instances_to_run_callbacks_on(records)
       # `records` here is the de-duplicated list Rails passes in (`unique_records`). The full,
@@ -64,12 +56,13 @@ module PaperTrail
         candidates[record] = record
       end.tap do |candidates|
         # The kept instance runs after_commit and builds the version. When it is not itself the
-        # last writer, copy the last writer's captured request state (whodunnit, controller_info,
-        # event_group_uuid) onto it so the version reflects the writer it belongs to.
+        # last writer, hand it the last writer's captured request context so the version is
+        # attributed to the writer it belongs to. The context shape is opaque here — the model
+        # owns capture/adopt (ModelConfig) so this stays agnostic of any app-specific state.
         candidates.each_value do |kept|
           next unless kept.class.run_commit_callbacks_on_first_saved_instances_in_transaction
 
-          copy_paper_trail_state(from: last_writers[kept], to: kept)
+          adopt_last_writer_state(into: kept, from: last_writers[kept])
         end
       end
     end
@@ -80,24 +73,17 @@ module PaperTrail
       return {} unless all_saves
 
       all_saves.each_with_object({}) do |record, acc|
-        next unless record.respond_to?(:paper_trail_whodunnit)
+        next unless record.respond_to?(:paper_trail_captured_state, true)
 
         acc[record] = record
       end
     end
 
-    def copy_paper_trail_state(from:, to:)
-      return if from.nil? || from.equal?(to)
-      return unless to.respond_to?(:paper_trail_whodunnit)
+    def adopt_last_writer_state(into:, from:)
+      return if from.nil? || from.equal?(into)
+      return unless from.respond_to?(:paper_trail_captured_state, true) && into.respond_to?(:paper_trail_adopt_state, true)
 
-      PAPER_TRAIL_STATE_IVARS.each do |ivar|
-        next unless from.instance_variable_defined?(ivar)
-
-        value = from.instance_variable_get(ivar)
-        next if value.blank?
-
-        to.instance_variable_set(ivar, value)
-      end
+      into.send(:paper_trail_adopt_state, from.send(:paper_trail_captured_state))
     end
 
     def merge_accumulated_versions(from:, to:)

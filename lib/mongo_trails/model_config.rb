@@ -25,8 +25,7 @@ module PaperTrail
 
     def on_save
       @model_class.class_eval do
-        attr_reader :paper_trail_accumulated_versions, :paper_trail_whodunnit,
-                    :paper_trail_controller_info, :paper_trail_event_group_uuid
+        attr_reader :paper_trail_accumulated_versions, :paper_trail_whodunnit
 
         after_save :paper_trail_accumulate_versions
         after_rollback :paper_trail_clear_accumulated_versions
@@ -35,14 +34,15 @@ module PaperTrail
 
         # Capture the whole PaperTrail.request context (not just whodunnit) on the saved
         # instance. The version is built later from after_commit, possibly on a *different*
-        # instance and after the request context that performed the save has been restored —
-        # so whodunnit, controller_info (e.g. impersonation / integration) and the app's
-        # event_group_uuid all have to travel on the instance, the same way whodunnit does.
+        # instance and after the request context that performed the save has been restored, so
+        # the context the version is attributed to has to travel on the instance. We snapshot the
+        # entire request store rather than named fields, so whatever a host app keeps in
+        # PaperTrail.request (whodunnit, controller_info, and any custom keys) is preserved
+        # without this gem knowing about app-specific state.
         def paper_trail_accumulate_versions
           @paper_trail_accumulated_versions ||= {}
           @paper_trail_whodunnit = PaperTrail.request.whodunnit
-          @paper_trail_controller_info = PaperTrail.request.controller_info
-          @paper_trail_event_group_uuid = PaperTrail.request.event_group_uuid if PaperTrail.request.respond_to?(:event_group_uuid)
+          @paper_trail_request_state = paper_trail_request_snapshot
 
           saved_changes.each do |k, new_value|
             old_value = @paper_trail_accumulated_versions[k.to_sym]
@@ -50,18 +50,44 @@ module PaperTrail
           end
         end
 
-        # Restore the captured request context for the duration of the version build so that
-        # everything that reads PaperTrail.request while building the version (whodunnit,
-        # controller_info metadata, event_group_uuid) reflects the writer this version belongs
-        # to, rather than whatever the request happens to hold at commit time.
-        def paper_trail_within_writer_request
-          return yield unless instance_variable_defined?(:@paper_trail_controller_info)
+        # A deep copy of the whole PaperTrail.request store (whodunnit, controller_info and any
+        # host-app keys), or nil if this build of PaperTrail doesn't expose the store.
+        def paper_trail_request_snapshot
+          request = PaperTrail.request
+          request.respond_to?(:to_h, true) ? request.send(:to_h) : nil
+        end
 
-          set_event_group_uuid = PaperTrail.request.respond_to?(:event_group_uuid=)
-          PaperTrail.request.with(whodunnit: @paper_trail_whodunnit, controller_info: @paper_trail_controller_info) do
-            PaperTrail.request.event_group_uuid = @paper_trail_event_group_uuid if set_event_group_uuid
+        # Restore the captured request context for the duration of the version build so that
+        # everything reading PaperTrail.request while building the version reflects the writer
+        # this version belongs to, rather than whatever the request holds at commit time.
+        def paper_trail_within_writer_request
+          snapshot = instance_variable_defined?(:@paper_trail_request_state) ? @paper_trail_request_state : nil
+          request = PaperTrail.request
+          return yield unless snapshot && request.respond_to?(:to_h, true) && request.respond_to?(:set, true)
+
+          previous = request.send(:to_h)
+          request.send(:set, snapshot)
+          begin
             yield
+          ensure
+            request.send(:set, previous)
           end
+        end
+
+        # Internal coordination API for PaperTrail::CallbackPropagation: move the captured
+        # context between in-memory instances of the same record within a transaction, without
+        # the propagation having to know which ivars hold it.
+        def paper_trail_captured_state
+          return unless instance_variable_defined?(:@paper_trail_request_state)
+
+          { whodunnit: @paper_trail_whodunnit, request_state: @paper_trail_request_state }
+        end
+
+        def paper_trail_adopt_state(state)
+          return if state.nil?
+
+          @paper_trail_whodunnit = state[:whodunnit]
+          @paper_trail_request_state = state[:request_state]
         end
 
         def paper_trail_accumulated_version_value(old_value, new_value)
