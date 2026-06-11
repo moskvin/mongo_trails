@@ -60,6 +60,14 @@ module PaperTrail
         # attributed to the writer it belongs to. The context shape is opaque here — the model
         # owns capture/adopt (ModelConfig) so this stays agnostic of any app-specific state.
         candidates.each_value do |kept|
+          # `candidates` can include non-ActiveRecord entries enrolled in the transaction by
+          # other gems (e.g. after_commit_everywhere's Wrap). Those respond neither to
+          # PaperTrail's capture/adopt API nor to the AR-only
+          # `run_commit_callbacks_on_first_saved_instances_in_transaction` class attribute, so
+          # touching that attribute on them raises NoMethodError and aborts the commit. Only
+          # PaperTrail-enabled records can adopt writer state — gate on that before reading the
+          # AR class attribute.
+          next unless kept.respond_to?(:paper_trail_adopt_state, true)
           next unless kept.class.run_commit_callbacks_on_first_saved_instances_in_transaction
 
           adopt_last_writer_state(into: kept, from: last_writers[kept])
