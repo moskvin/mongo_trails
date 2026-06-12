@@ -74,6 +74,26 @@ class TransactionHandlingTest < Minitest::Test
     assert_equal([nil, 'Governor'], versions.last.object_changes['title'])
   end
 
+  # When the same record is written through SEVERAL distinct in-memory instances in one
+  # transaction (e.g. several automations each loading and updating it), each instance produces
+  # its own version, attributed to the context captured while that instance was saved — rather
+  # than collapsing every change onto a single version.
+  def test_distinct_instances_each_get_their_own_version
+    user = User.create!(name: 'John Doe')
+    assert_equal 1, user.versions.count
+
+    ActiveRecord::Base.transaction do
+      User.find(user.id).update!(name: 'Jackie Chan')
+      User.find(user.id).update!(title: 'Governor')
+    end
+
+    assert_equal 3, user.versions.count
+    assert_equal %w[create update update], user.versions.pluck(:event)
+    updates = user.versions.where(event: 'update').to_a
+    assert(updates.any? { |v| v.object_changes.keys == %w[name] })
+    assert(updates.any? { |v| v.object_changes.keys == %w[title] })
+  end
+
   def test_on_update_does_not_create_version_if_transaction_not_completed
     user = User.create!(name: 'John Doe')
     assert_equal 1, user.versions.count

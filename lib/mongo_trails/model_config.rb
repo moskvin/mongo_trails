@@ -33,12 +33,12 @@ module PaperTrail
         private
 
         # Capture the whole PaperTrail.request context (not just whodunnit) on the saved
-        # instance. The version is built later from after_commit, possibly on a *different*
-        # instance and after the request context that performed the save has been restored, so
-        # the context the version is attributed to has to travel on the instance. We snapshot the
-        # entire request store rather than named fields, so whatever a host app keeps in
-        # PaperTrail.request (whodunnit, controller_info, and any custom keys) is preserved
-        # without this gem knowing about app-specific state.
+        # instance. The version is built later at transaction commit (see
+        # PaperTrail::CallbackPropagation), by which time the request context that performed the
+        # save has been restored, so the context the version is attributed to has to travel on the
+        # instance. We snapshot the entire request store rather than named fields, so whatever a
+        # host app keeps in PaperTrail.request (whodunnit, controller_info, and any custom keys) is
+        # preserved without this gem knowing about app-specific state.
         def paper_trail_accumulate_versions
           @paper_trail_accumulated_versions ||= {}
           @paper_trail_whodunnit = PaperTrail.request.whodunnit
@@ -74,22 +74,6 @@ module PaperTrail
           end
         end
 
-        # Internal coordination API for PaperTrail::CallbackPropagation: move the captured
-        # context between in-memory instances of the same record within a transaction, without
-        # the propagation having to know which ivars hold it.
-        def paper_trail_captured_state
-          return unless instance_variable_defined?(:@paper_trail_request_state)
-
-          { whodunnit: @paper_trail_whodunnit, request_state: @paper_trail_request_state }
-        end
-
-        def paper_trail_adopt_state(state)
-          return if state.nil?
-
-          @paper_trail_whodunnit = state[:whodunnit]
-          @paper_trail_request_state = state[:request_state]
-        end
-
         def paper_trail_accumulated_version_value(old_value, new_value)
           if old_value.present? && old_value.is_a?(Array) && old_value.size > 1 && new_value.is_a?(Array) && new_value.size > 1 # rubocop:disable Layout/LineLength
             [old_value.first, new_value.last]
@@ -111,7 +95,6 @@ module PaperTrail
         private
 
         def paper_trail_on_record_create_in_transaction
-          paper_trail_within_writer_request { paper_trail.record_create if paper_trail.save_version? }
           paper_trail_clear_accumulated_versions
         end
       end
@@ -131,16 +114,6 @@ module PaperTrail
         end
 
         def paper_trail_on_record_update
-          paper_trail_within_writer_request do
-            if paper_trail.save_version?
-              paper_trail.record_update(
-                force: false,
-                in_after_callback: true,
-                is_touch: false
-              )
-            end
-          end
-
           paper_trail.clear_version_instance
           paper_trail_clear_accumulated_versions
         end
