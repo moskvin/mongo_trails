@@ -54,10 +54,15 @@ module PaperTrail
       return if from_changes.blank?
 
       from.send(:paper_trail_within_writer_request) do
-        if from.previously_new_record?
+        # Mirror Rails' own create-vs-update determination for after_commit callbacks
+        # (ActiveRecord::Transactions#transaction_include_any_action?): a record created in this
+        # transaction is a `create` even if it was updated again afterwards. `previously_new_record?`
+        # only reflects the LAST save, so it mislabels create-then-update-in-one-transaction as an
+        # update; `_new_record_before_last_commit` is the transaction-aware flag Rails uses.
+        if from.persisted? && from._new_record_before_last_commit
           from.paper_trail.record_create if from.paper_trail.save_version?
-        else
-          from.paper_trail.record_update(force: false, in_after_callback: true, is_touch: false) if from.paper_trail.save_version? # rubocop:disable Style/IfUnlessModifier,Layout/LineLength
+        elsif from.paper_trail.save_version?
+          from.paper_trail.record_update(force: false, in_after_callback: true, is_touch: false)
         end
       end
     end
