@@ -150,4 +150,25 @@ class TransactionHandlingTest < Minitest::Test
 
     assert_equal 1, user.versions.count
   end
+
+  # A destroy never fires after_save, so the writer context is not captured by the usual
+  # accumulate-on-save path. The destroy version is built at commit time (after_commit on:
+  # :destroy), by which point the request context may have moved on. The context must be
+  # snapshotted while the record is being destroyed (before_destroy) so the version is still
+  # attributed to the writer that destroyed it, not to whatever the request holds at commit time.
+  def test_on_destroy_keeps_writer_whodunnit_when_request_changes_before_commit
+    PaperTrail.request.whodunnit = 'deleter'
+    user = User.create!(name: 'John Doe')
+
+    ActiveRecord::Base.transaction do
+      user.destroy!
+      # Simulate the writer's context being torn down before the outermost transaction commits
+      # (e.g. a service object that resets whodunnit in an ensure block).
+      PaperTrail.request.whodunnit = 'someone-else'
+    end
+
+    destroy_version = user.versions.where(event: 'destroy').last
+    assert_not_nil destroy_version, 'A destroy version should have been created'
+    assert_equal 'deleter', destroy_version.whodunnit
+  end
 end

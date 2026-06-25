@@ -124,9 +124,23 @@ module PaperTrail
 
     def on_destroy(_recording_order = 'before')
       @model_class.class_eval do
+        # A destroy never fires `after_save`, so `paper_trail_accumulate_versions` (the after_save
+        # hook that snapshots the request context for create/update) never runs for it. Capture
+        # the context here instead, while the record is being destroyed and PaperTrail.request
+        # still holds the writer's context (whodunnit, event_group_uuid, controller_info and any
+        # host-app keys). The destroy version itself is only built at transaction commit (see
+        # `paper_trail_on_record_destroy_in_transaction`), by which point the writer's context has
+        # been torn down — without this snapshot the version is attributed to whatever the request
+        # happens to hold at commit time, losing its whodunnit and event_group_uuid.
+        before_destroy :paper_trail_capture_destroy_context, prepend: true
         after_commit :paper_trail_on_record_destroy_in_transaction, on: :destroy
 
         private
+
+        def paper_trail_capture_destroy_context
+          @paper_trail_whodunnit = PaperTrail.request.whodunnit
+          @paper_trail_request_state = paper_trail_request_snapshot
+        end
 
         def paper_trail_on_record_destroy_in_transaction
           paper_trail_within_writer_request { paper_trail.record_destroy('before') }
